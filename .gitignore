@@ -1,0 +1,23 @@
+# PyInstaller / Python
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.spec
+.venv/
+venv/
+
+# 本机配置与隐私数据
+config.json
+captures/
+*.log
+adb_ble_capture.log
+
+# 发布产物 / 含本机 MAC 的诊断脚本（按需本地保留）
+YUNM-Plug-Monitor.exe
+pair_test.py
+replay_test.py
+
+# 系统
+Thumbs.db
+desktop.ini

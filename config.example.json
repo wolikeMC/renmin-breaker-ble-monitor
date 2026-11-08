@@ -1,0 +1,13 @@
+{
+  "devices": [],
+  "paused_devices": [],
+  "metrics": {
+    "power": true,
+    "voltage": true,
+    "current": true,
+    "energy": true
+  },
+  "poll_interval": 3.0,
+  "scan_timeout": 8.0,
+  "auto_start": false
+}
