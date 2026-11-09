@@ -359,20 +359,21 @@ def _winreg():
     return winreg
 
 
-def build_launch_command() -> str:
+def build_launch_command(autostart: bool = False) -> str:
     """生成写进注册表 Run 项的启动命令。
 
     打包后：
-        "C:\\path\\YUNM-Plug-Monitor.exe"
+        "C:\\path\\YUNM-Plug-Monitor.exe" --autostart
     开发时：
-        "C:\\...\\python.exe" "C:\\...\\main.py"
+        "C:\\...\\python.exe" "C:\\...\\main.py" --autostart
 
     注意：不能只写 sys.executable。开发时那是 python.exe，双击启动后
     不知道要运行哪个脚本，会直接打开一个空白的 Python 解释器。
     """
     executable = os.path.abspath(sys.executable)
+    suffix = " --autostart" if autostart else ""
     if is_frozen():
-        return f'"{executable}"'
+        return f'"{executable}"{suffix}'
 
     script = ""
     if sys.argv and sys.argv[0]:
@@ -382,7 +383,7 @@ def build_launch_command() -> str:
     if not script.lower().endswith(".py") or not os.path.isfile(script):
         script = os.path.join(app_dir(), "main.py")
 
-    return f'"{executable}" "{os.path.abspath(script)}"'
+    return f'"{executable}" "{os.path.abspath(script)}"{suffix}'
 
 
 def get_autostart_command() -> str | None:
@@ -409,7 +410,7 @@ def set_autostart(enabled: bool) -> str | None:
     """启用/禁用开机自启，返回当前（或删除前）的启动命令。"""
     winreg = _winreg()
     if enabled:
-        command = build_launch_command()
+        command = build_launch_command(autostart=True)
         with winreg.CreateKeyEx(
             winreg.HKEY_CURRENT_USER,
             AUTOSTART_RUN_KEY,

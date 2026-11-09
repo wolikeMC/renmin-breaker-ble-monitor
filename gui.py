@@ -376,7 +376,9 @@ class MainWindow(QMainWindow):
         if actual_autostart:
             try:
                 command = utils.get_autostart_command()
-                if command and command != utils.build_launch_command():
+                if command and command != utils.build_launch_command(
+                    autostart=True
+                ):
                     self._append_log(
                         "注意：注册表中的自启命令与当前程序路径不同，"
                         "重新勾选一次可更新。"
@@ -946,7 +948,11 @@ class MainWindow(QMainWindow):
         self._persist()
         self._append_log(
             f"开机自启已{'启用' if checked else '关闭'}"
-            + (f"：{utils.build_launch_command()}" if checked else "")
+            + (
+                f"：{utils.build_launch_command(autostart=True)}"
+                if checked
+                else ""
+            )
         )
 
     def _on_interval_changed(self, value: float) -> None:

@@ -49,7 +49,7 @@ Windows 托盘通常只有 16～32px，所以一次只显示一个值，按“�
 - **系统托盘**：动态 Tooltip，例如 `客厅插座: 156W 240.1V | 书房插座: 断线`
 - **状态颜色**：黄=连接中，绿=正常，红=断线
 - **设备级断开/恢复**：一键释放 BLE，让手机小程序连接；断开状态持久化
-- **开机自启**：写入 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+- **开机自启**：写入 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`，自启动时只进托盘后台，不弹主窗口
 - **单实例保护**：重复双击只会唤醒已有窗口，不会再开第二个托盘/蓝牙连接
 - **单文件 exe**：PyInstaller onefile，目标电脑**不需要安装 Python**
 - **完整中文界面 + 日志**
@@ -204,8 +204,9 @@ BLE 插座同一时间通常只接受一个中心设备连接。需要手机小�
 HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run
 ```
 
-- 源码运行：命令为 `python.exe "main.py"`；
-- exe 运行：命令为 exe 路径；
+- 源码运行：命令为 `python.exe "main.py" --autostart`；
+- exe 运行：命令为 exe 路径 + `--autostart`；
+- 自启动模式只启动托盘和蓝牙后台，主窗口保持隐藏，不会弹到前面；
 - 移动项目/exe 后，取消再重新勾选一次。
 
 ## 项目结构

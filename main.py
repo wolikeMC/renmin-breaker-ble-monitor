@@ -682,10 +682,17 @@ class SingleInstance(QObject):
             except Exception:
                 logger.exception("创建单实例 Mutex 失败")
 
-    def notify_existing(self, timeout_ms: int = 800) -> bool:
-        """如果已有实例，请求它显示窗口并返回 True。"""
+    def notify_existing(
+        self, timeout_ms: int = 800, show_existing: bool = True
+    ) -> bool:
+        """如果已有实例，请求它显示窗口并返回 True。
+
+        自启动模式下 show_existing=False：只退出，不把已有窗口弹到前面。
+        """
         if not self._already_running:
             return False
+        if not show_existing:
+            return True
 
         socket = QLocalSocket()
         socket.connectToServer(self._name)
@@ -761,18 +768,27 @@ class SingleInstance(QObject):
 # ---------------------------------------------------------------------------
 
 class YUNMApplication:
-    def __init__(self, qt_argv: list[str], no_tray: bool = False) -> None:
+    def __init__(
+        self,
+        qt_argv: list[str],
+        no_tray: bool = False,
+        autostart: bool = False,
+    ) -> None:
         self.no_tray = no_tray
+        self.autostart = autostart
         self.qt_app = QApplication(qt_argv)
         self.qt_app.setApplicationName(utils.APP_DISPLAY_NAME)
         self.qt_app.setQuitOnLastWindowClosed(False)
 
         # 必须在创建窗口、托盘和蓝牙线程之前判断。
-        # 第二个实例只负责唤醒第一个实例，然后立即退出。
+        # 第二个实例只负责唤醒第一个实例，然后立即退出；
+        # 自启动模式下不唤醒，避免开机时把已有窗口弹出来。
         self.single = SingleInstance()
-        self._already_running = self.single.notify_existing()
+        self._already_running = self.single.notify_existing(
+            show_existing=not autostart
+        )
         if self._already_running:
-            logger.info("检测到已有实例，已请求其显示窗口，本实例退出")
+            logger.info("检测到已有实例，本实例退出")
             return
 
         icon_file = utils.resource_path("app.ico")
@@ -870,13 +886,22 @@ class YUNMApplication:
         if self._already_running:
             return 0
 
-        self.window.show()
+        if self.autostart:
+            logger.info("自启动模式：主窗口保持隐藏，仅启动托盘和蓝牙后台")
+            self.window.append_system_log(
+                "以自启动模式运行：窗口保持隐藏，点击托盘图标可打开。"
+            )
+        else:
+            self.window.show()
 
         if self.no_tray:
             self.window.set_tray_available(False)
             self.window.append_system_log(
                 "以 --no-tray 模式运行：关闭窗口即退出程序。"
             )
+            if self.autostart:
+                # 没有托盘又隐藏窗口会让程序无法操作，退回显示窗口。
+                self.window.show()
         else:
             tray_ok = self.tray.start()
             self.window.set_tray_available(tray_ok)
@@ -887,6 +912,9 @@ class YUNMApplication:
                 self.window.statusBar().showMessage(
                     "警告：系统托盘不可用，关闭窗口会退出程序"
                 )
+                if self.autostart:
+                    # 自启动时托盘不可用，必须显示窗口，否则用户找不到程序。
+                    self.window.show()
 
         try:
             self.bridge.start(self.config)
@@ -950,6 +978,11 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         action="store_true",
         help="不创建托盘图标（调试用；关闭窗口会直接退出）",
     )
+    parser.add_argument(
+        "--autostart",
+        action="store_true",
+        help="开机自启模式：主窗口保持隐藏，仅启动托盘和蓝牙",
+    )
     args, qt_args = parser.parse_known_args()
     # 只把 Qt 不认识的参数剔除，其它交给 QApplication
     return args, [sys.argv[0], *qt_args]
@@ -963,7 +996,11 @@ def main() -> int:
     logger.info("启动 %s", utils.APP_DISPLAY_NAME)
 
     try:
-        app = YUNMApplication(qt_argv, no_tray=args.no_tray)
+        app = YUNMApplication(
+            qt_argv,
+            no_tray=args.no_tray,
+            autostart=args.autostart,
+        )
     except Exception:
         logger.exception("应用初始化失败")
         return 1
