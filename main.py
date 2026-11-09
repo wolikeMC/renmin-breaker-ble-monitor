@@ -23,15 +23,16 @@ from __future__ import annotations
 import argparse
 import getpass
 import hashlib
+import io
 import logging
 import os
 import sys
 import threading
 from typing import Any
 
-from PIL import Image, ImageDraw
-from PySide6.QtCore import QObject, Signal, Slot
-from PySide6.QtGui import QIcon
+from PIL import Image, ImageDraw, ImageFont
+from PySide6.QtCore import QObject, QTimer, Qt, Signal, Slot
+from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMessageBox
 import pystray
@@ -108,6 +109,99 @@ def make_tray_image(color: tuple[int, int, int, int], size: int = 64) -> Image.I
         fill=(255, 255, 255, 255),
     )
     return image
+
+
+def _load_icon_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    """加载 Windows 粗体字体；失败时退回 Pillow 默认字体。"""
+    for path in (
+        r"C:\Windows\Fonts\arialbd.ttf",
+        r"C:\Windows\Fonts\msyhbd.ttc",
+        r"C:\Windows\Fonts\seguisb.ttf",
+    ):
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def make_value_image(
+    value_text: str,
+    unit: str,
+    color: tuple[int, int, int, int],
+    size: int = 64,
+) -> Image.Image:
+    """画一个带数值的托盘/任务栏图标。
+
+    Windows 托盘最终显示为 16~32px，因此图标只放一个主数值和单位；
+    多个指标由 TrayController 定时轮换。
+    """
+    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle(
+        (2, 2, size - 3, size - 3),
+        radius=max(8, size // 5),
+        fill=color,
+        outline=(255, 255, 255, 245),
+        width=max(2, size // 22),
+    )
+
+    length = len(value_text)
+    value_size = 34 if length <= 3 else 28 if length == 4 else 22
+    value_font = _load_icon_font(value_size)
+    unit_font = _load_icon_font(12)
+
+    value_box = draw.textbbox((0, 0), value_text, font=value_font)
+    value_width = value_box[2] - value_box[0]
+    value_height = value_box[3] - value_box[1]
+    value_y = (size - value_height) // 2 - (6 if unit else 0)
+    draw.text(
+        ((size - value_width) // 2, value_y),
+        value_text,
+        font=value_font,
+        fill=(255, 255, 255, 255),
+    )
+    if unit:
+        unit_box = draw.textbbox((0, 0), unit, font=unit_font)
+        unit_width = unit_box[2] - unit_box[0]
+        unit_height = unit_box[3] - unit_box[1]
+        draw.text(
+            ((size - unit_width) // 2, size - unit_height - 6),
+            unit,
+            font=unit_font,
+            fill=(255, 255, 255, 235),
+        )
+    return image
+
+
+def format_icon_value(key: str, value: float) -> tuple[str, str]:
+    """把指标压缩成适合小图标显示的短文本。"""
+    if key == "power":
+        return f"{value:.0f}", "W"
+    if key == "voltage":
+        return f"{value:.0f}", "V"
+    if key == "current":
+        return f"{value:.2f}", "A"
+    if key == "energy":
+        return f"{value:.1f}", "kWh"
+    if key == "power_factor":
+        return f"{value:.2f}", ""
+    if key == "cost":
+        return f"{value:.1f}", "¥"
+    meta = utils.METRIC_DEFS.get(key, {})
+    try:
+        return str(meta.get("fmt", "{:.1f}").format(float(value))), str(
+            meta.get("unit", "")
+        )
+    except (TypeError, ValueError):
+        return "--", ""
+
+
+def pil_to_qicon(image: Image.Image) -> QIcon:
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    qimage = QImage.fromData(buffer.getvalue())
+    return QIcon(QPixmap.fromImage(qimage))
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +308,8 @@ class TrayController(QObject):
     Qt 会自动排队到 GUI 主线程执行。所有 pystray 更新都在主线程完成。
     """
 
+    icon_changed = Signal(object)
+
     def __init__(self, window: MainWindow, config: dict[str, Any]) -> None:
         super().__init__()
         self.window = window
@@ -224,12 +320,16 @@ class TrayController(QObject):
         self._images = {
             key: make_tray_image(color) for key, color in TRAY_COLORS.items()
         }
-        self._last_icon_key = "idle"
+        self._last_icon_key: tuple[Any, ...] | None = None
         self._last_tooltip = utils.APP_DISPLAY_NAME
         self._hide_notified = False
         self._stopped = False
         self._start_failed = False
         self._ready = threading.Event()
+        self._icon_index = 0
+        self._icon_timer = QTimer(self)
+        self._icon_timer.setTimerType(Qt.TimerType.CoarseTimer)
+        self._icon_timer.timeout.connect(self._rotate_icon_metric)
 
         self.icon = pystray.Icon(
             "YUNM-Plug-Monitor",
@@ -237,6 +337,7 @@ class TrayController(QObject):
             title=self._last_tooltip,
             menu=self._build_menu(),
         )
+        self._sync_icon_timer()
 
     def _build_menu(self) -> pystray.Menu:
         return pystray.Menu(
@@ -349,7 +450,56 @@ class TrayController(QObject):
             # 手动断开后清除旧状态和旧读数，恢复时不要显示过期数据
             self.statuses.pop(address, None)
             self.latest.pop(address, None)
+        self._sync_icon_timer()
         self._refresh()
+
+    def _sync_icon_timer(self) -> None:
+        seconds = float(self.config.get("floating_rotate_seconds", 5.0))
+        if self.config.get("icon_show_value", True) and seconds > 0:
+            self._icon_timer.start(max(1000, int(seconds * 1000)))
+        else:
+            self._icon_timer.stop()
+            self._icon_index = 0
+
+    def _rotate_icon_metric(self) -> None:
+        metrics = [
+            key
+            for key in utils.METRIC_ORDER
+            if self.config.get("metrics", {}).get(key, False)
+        ]
+        if not metrics:
+            return
+        self._icon_index = (self._icon_index + 1) % len(metrics)
+        self._refresh()
+
+    def _current_icon_data(self) -> tuple[str, float] | None:
+        """取第一台已有数据的已连接设备，返回当前轮播指标。"""
+        if not self.config.get("icon_show_value", True):
+            return None
+        metrics = [
+            key
+            for key in utils.METRIC_ORDER
+            if self.config.get("metrics", {}).get(key, False)
+        ]
+        if not metrics:
+            return None
+        paused = set(self.config.get("paused_devices", []))
+        for device in self.config.get("devices", []):
+            address = device.get("address")
+            if not address or address in paused:
+                continue
+            if self._status_of(address) != "connected":
+                continue
+            data = self.latest.get(address, {})
+            if not data:
+                continue
+            start = self._icon_index % len(metrics)
+            for offset in range(len(metrics)):
+                key = metrics[(start + offset) % len(metrics)]
+                value = data.get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    return key, float(value)
+        return None
 
     @Slot()
     def on_hidden_to_tray(self) -> None:
@@ -462,12 +612,34 @@ class TrayController(QObject):
                 logger.warning("更新托盘 Tooltip 失败", exc_info=True)
 
         key = self._overall_key()
-        if key != self._last_icon_key:
-            self._last_icon_key = key
-            try:
-                self.icon.icon = self._images[key]
-            except Exception:  # noqa: BLE001
-                logger.warning("更新托盘图标失败", exc_info=True)
+        icon_value = self._current_icon_data()
+        if icon_value is not None:
+            metric_key, value = icon_value
+            value_text, unit = format_icon_value(metric_key, value)
+            color = TRAY_COLORS.get(key, TRAY_COLORS["idle"])
+            image = make_value_image(value_text, unit, color)
+            icon_key: tuple[Any, ...] = (
+                "value",
+                metric_key,
+                round(value, 3),
+                key,
+            )
+        else:
+            image = self._images.get(key, self._images["idle"])
+            icon_key = ("status", key)
+
+        if icon_key == self._last_icon_key:
+            return
+        self._last_icon_key = icon_key
+        try:
+            self.icon.icon = image
+        except Exception:  # noqa: BLE001
+            logger.warning("更新托盘图标失败", exc_info=True)
+            return
+        try:
+            self.icon_changed.emit(pil_to_qicon(image))
+        except Exception:  # noqa: BLE001
+            logger.debug("更新任务栏窗口图标失败", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -650,6 +822,7 @@ class YUNMApplication:
         self.bridge.scan_failed.connect(self.window.on_scan_failed)
 
         # 悬浮窗 -> 主窗口 / 托盘
+        self.tray.icon_changed.connect(self.window.setWindowIcon)
         self.floating.show_main_requested.connect(self.window.show_window)
         self.floating.hide_requested.connect(self._hide_floating)
         self.floating.quit_requested.connect(self.qt_app.quit)

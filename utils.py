@@ -69,6 +69,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # 贴任务栏悬浮窗（类似 TrafficMonitor）
     "floating_enabled": True,
     "floating_in_taskbar": True,
+    "icon_show_value": True,
     "floating_rows": 2,
     "floating_columns": 2,
     "floating_rotate_seconds": 5.0,
@@ -252,6 +253,9 @@ def normalize_config(raw: Any) -> dict[str, Any]:
     )
     config["floating_in_taskbar"] = bool(
         raw.get("floating_in_taskbar", config["floating_in_taskbar"])
+    )
+    config["icon_show_value"] = bool(
+        raw.get("icon_show_value", config["icon_show_value"])
     )
     config["floating_rows"] = int(
         _clamp_float(raw.get("floating_rows"), 1, 4, config["floating_rows"])

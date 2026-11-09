@@ -280,10 +280,17 @@ class MainWindow(QMainWindow):
             "这是稳定的置顶窗口，不注入 Explorer。"
         )
         floating_layout.addWidget(self.floating_taskbar_cb)
+        self.icon_value_cb = QCheckBox("图标显示数值")
+        self.icon_value_cb.setToolTip(
+            "托盘/任务栏按钮图标显示当前指标数值，按轮播秒数切换指标；\n"
+            "关闭后恢复为彩色状态圆点。"
+        )
+        floating_layout.addWidget(self.icon_value_cb)
         floating_layout.addSpacing(14)
 
         floating_layout.addWidget(QLabel("排列："))
         self.floating_layout_combo = QComboBox()
+        self.floating_layout_combo.setMinimumWidth(175)
         self.floating_layout_combo.addItem("两行 × 两列（4 个）", (2, 2))
         self.floating_layout_combo.addItem("一行 × 两列（2 个，轮播）", (1, 2))
         self.floating_layout_combo.addItem("两行 × 一列（2 个，轮播）", (2, 1))
@@ -315,10 +322,6 @@ class MainWindow(QMainWindow):
         floating_layout.addWidget(self.floating_opacity_spin)
 
         floating_layout.addStretch(1)
-        floating_hint = QLabel("拖动移动 · 左键打开")
-        floating_hint.setToolTip("右键悬浮窗可隐藏或退出程序")
-        floating_hint.setStyleSheet("color: #757575;")
-        floating_layout.addWidget(floating_hint)
         root.addWidget(floating_group)
 
         # 日志
@@ -394,6 +397,10 @@ class MainWindow(QMainWindow):
             self.floating_taskbar_cb.setChecked(
                 bool(self.config.get("floating_in_taskbar", True))
             )
+        with QSignalBlocker(self.icon_value_cb):
+            self.icon_value_cb.setChecked(
+                bool(self.config.get("icon_show_value", True))
+            )
         with QSignalBlocker(self.floating_layout_combo):
             target = (
                 int(self.config.get("floating_rows", 2)),
@@ -433,6 +440,7 @@ class MainWindow(QMainWindow):
         self.floating_taskbar_cb.toggled.connect(
             self._on_floating_taskbar_toggled
         )
+        self.icon_value_cb.toggled.connect(self._on_icon_value_toggled)
         self.floating_layout_combo.currentIndexChanged.connect(
             self._on_floating_layout_changed
         )
@@ -894,6 +902,10 @@ class MainWindow(QMainWindow):
 
     def _on_floating_taskbar_toggled(self, checked: bool) -> None:
         self.config["floating_in_taskbar"] = bool(checked)
+        self._persist()
+
+    def _on_icon_value_toggled(self, checked: bool) -> None:
+        self.config["icon_show_value"] = bool(checked)
         self._persist()
 
     def _on_floating_layout_changed(self, _index: int) -> None:
