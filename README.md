@@ -10,6 +10,17 @@
 
 ![界面预览](docs/screenshot.png)
 
+![悬浮窗预览](docs/floating.png)
+
+悬浮窗默认贴在右下角任务栏上方，显示：
+
+```text
+功率 159.4W    电压 240.2V
+电流 0.732A    电量 112.89kWh
+```
+
+拖动可移动，左键打开主界面，右键可以隐藏或退出；设置里可以改排列、轮播秒数、字号和透明度。
+
 > **免责声明**
 >
 > 这是一个个人学习 / 自己设备互操作项目，**与上海人民断路器、控控乐官方没有任何隶属关系**。
@@ -22,6 +33,7 @@
 
 - **直接 BLE 读取**：扫描、连接、订阅 TX、轮询 RX，不依赖微信小程序或厂商云端
 - **实时指标**：功率、电压、电流、累计电量、功率因数、累计金额
+- **任务栏悬浮窗**：类似 TrafficMonitor，贴在任务栏上方常显；支持一行/两行/四行、每行一列/两列、定时轮播、拖动、字号和透明度
 - **多设备**：每台插座独立连接、断线重连、独立显示
 - **系统托盘**：动态 Tooltip，例如 `客厅插座: 156W 240.1V | 书房插座: 断线`
 - **状态颜色**：黄=连接中，绿=正常，红=断线
@@ -147,7 +159,15 @@ EC ED | 长度(2) | 数据(32) | CRC(2)
   },
   "poll_interval": 3.0,
   "scan_timeout": 8.0,
-  "auto_start": false
+  "auto_start": false,
+  "floating_enabled": true,
+  "floating_rows": 2,
+  "floating_columns": 2,
+  "floating_rotate_seconds": 5.0,
+  "floating_font_size": 11,
+  "floating_opacity": 0.86,
+  "floating_x": null,
+  "floating_y": null
 }
 ```
 
@@ -182,6 +202,7 @@ HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run
 ├─ main.py              # Qt 主循环、托盘、跨线程 Signal 桥
 ├─ gui.py               # PySide6 主界面、设备/指标管理
 ├─ ble_manager.py       # asyncio BLE、命令生成、分片拼接、解析
+├─ taskbar_widget.py    # 贴任务栏悬浮窗、轮播、拖动、右键菜单
 ├─ utils.py             # 配置、路径、开机自启、日志
 ├─ pair_test.py         # 一次性配对诊断脚本
 ├─ replay_test.py       # 命令重放诊断脚本

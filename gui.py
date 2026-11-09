@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -159,7 +160,10 @@ class MainWindow(QMainWindow):
         headers = ["名称", "蓝牙地址", "状态"]
         for key in utils.METRIC_ORDER:
             meta = utils.METRIC_DEFS[key]
-            headers.append(f"{meta['label']}({meta['unit']})")
+            unit = meta.get("unit", "")
+            headers.append(
+                f"{meta['label']}({unit})" if unit else meta["label"]
+            )
         headers.append("最后更新")
 
         self.table = QTableWidget(0, COLUMN_COUNT)
@@ -247,7 +251,7 @@ class MainWindow(QMainWindow):
         settings_layout.addWidget(self.autostart_cb)
         settings_layout.addSpacing(18)
 
-        settings_layout.addWidget(QLabel("托盘显示指标："))
+        settings_layout.addWidget(QLabel("显示指标（托盘/悬浮窗）："))
         self.metric_checks: dict[str, QCheckBox] = {}
         for key in utils.METRIC_ORDER:
             check = QCheckBox(utils.METRIC_DEFS[key]["label"])
@@ -263,6 +267,52 @@ class MainWindow(QMainWindow):
         self.interval_spin.setSuffix(" 秒")
         settings_layout.addWidget(self.interval_spin)
         root.addWidget(settings_group)
+
+        # 悬浮窗设置
+        floating_group = QGroupBox("任务栏悬浮窗")
+        floating_layout = QHBoxLayout(floating_group)
+
+        self.floating_cb = QCheckBox("显示悬浮窗")
+        floating_layout.addWidget(self.floating_cb)
+        floating_layout.addSpacing(14)
+
+        floating_layout.addWidget(QLabel("排列："))
+        self.floating_layout_combo = QComboBox()
+        self.floating_layout_combo.addItem("两行 × 两列（4 个）", (2, 2))
+        self.floating_layout_combo.addItem("一行 × 两列（2 个，轮播）", (1, 2))
+        self.floating_layout_combo.addItem("两行 × 一列（2 个，轮播）", (2, 1))
+        self.floating_layout_combo.addItem("四行 × 一列（4 个）", (4, 1))
+        self.floating_layout_combo.addItem("一行 × 一列（1 个，轮播）", (1, 1))
+        floating_layout.addWidget(self.floating_layout_combo)
+
+        floating_layout.addSpacing(12)
+        floating_layout.addWidget(QLabel("轮播："))
+        self.floating_rotate_spin = QSpinBox()
+        self.floating_rotate_spin.setRange(0, 60)
+        self.floating_rotate_spin.setSuffix(" 秒")
+        self.floating_rotate_spin.setSpecialValueText("不轮播")
+        floating_layout.addWidget(self.floating_rotate_spin)
+
+        floating_layout.addSpacing(12)
+        floating_layout.addWidget(QLabel("字号："))
+        self.floating_font_spin = QSpinBox()
+        self.floating_font_spin.setRange(8, 24)
+        self.floating_font_spin.setSuffix(" pt")
+        floating_layout.addWidget(self.floating_font_spin)
+
+        floating_layout.addSpacing(12)
+        floating_layout.addWidget(QLabel("透明度："))
+        self.floating_opacity_spin = QDoubleSpinBox()
+        self.floating_opacity_spin.setRange(0.3, 1.0)
+        self.floating_opacity_spin.setDecimals(2)
+        self.floating_opacity_spin.setSingleStep(0.05)
+        floating_layout.addWidget(self.floating_opacity_spin)
+
+        floating_layout.addStretch(1)
+        floating_hint = QLabel("拖动移动 · 左键打开 · 右键菜单")
+        floating_hint.setStyleSheet("color: #757575;")
+        floating_layout.addWidget(floating_hint)
+        root.addWidget(floating_group)
 
         # 日志
         log_group = QGroupBox("通信日志（解密后的明文 Hex）")
@@ -331,6 +381,30 @@ class MainWindow(QMainWindow):
         with QSignalBlocker(self.interval_spin):
             self.interval_spin.setValue(float(self.config["poll_interval"]))
 
+        with QSignalBlocker(self.floating_cb):
+            self.floating_cb.setChecked(bool(self.config.get("floating_enabled", True)))
+        with QSignalBlocker(self.floating_layout_combo):
+            target = (
+                int(self.config.get("floating_rows", 2)),
+                int(self.config.get("floating_columns", 2)),
+            )
+            for index in range(self.floating_layout_combo.count()):
+                if self.floating_layout_combo.itemData(index) == target:
+                    self.floating_layout_combo.setCurrentIndex(index)
+                    break
+        with QSignalBlocker(self.floating_rotate_spin):
+            self.floating_rotate_spin.setValue(
+                int(round(float(self.config.get("floating_rotate_seconds", 5.0))))
+            )
+        with QSignalBlocker(self.floating_font_spin):
+            self.floating_font_spin.setValue(
+                int(self.config.get("floating_font_size", 11))
+            )
+        with QSignalBlocker(self.floating_opacity_spin):
+            self.floating_opacity_spin.setValue(
+                float(self.config.get("floating_opacity", 0.86))
+            )
+
         self._refresh_table()
         self._apply_metric_visibility()
         self._update_summary()
@@ -344,6 +418,19 @@ class MainWindow(QMainWindow):
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.autostart_cb.toggled.connect(self._on_autostart_toggled)
         self.interval_spin.valueChanged.connect(self._on_interval_changed)
+        self.floating_cb.toggled.connect(self._on_floating_toggled)
+        self.floating_layout_combo.currentIndexChanged.connect(
+            self._on_floating_layout_changed
+        )
+        self.floating_rotate_spin.valueChanged.connect(
+            self._on_floating_rotation_changed
+        )
+        self.floating_font_spin.valueChanged.connect(
+            self._on_floating_font_changed
+        )
+        self.floating_opacity_spin.valueChanged.connect(
+            self._on_floating_opacity_changed
+        )
 
         for key, check in self.metric_checks.items():
             check.toggled.connect(
@@ -774,9 +861,43 @@ class MainWindow(QMainWindow):
         self._apply_metric_visibility()
         self._persist()
         self.statusBar().showMessage(
-            f"托盘{'显示' if checked else '隐藏'}“{utils.METRIC_DEFS[key]['label']}”",
+            f"{'显示' if checked else '隐藏'}“{utils.METRIC_DEFS[key]['label']}”",
             3000,
         )
+
+    def set_floating_enabled(self, enabled: bool) -> None:
+        """供主程序右键菜单同步“显示悬浮窗”勾选状态。"""
+        with QSignalBlocker(self.floating_cb):
+            self.floating_cb.setChecked(bool(enabled))
+        self.config["floating_enabled"] = bool(enabled)
+
+    def _on_floating_toggled(self, checked: bool) -> None:
+        self.config["floating_enabled"] = bool(checked)
+        self._persist()
+        self.statusBar().showMessage(
+            f"悬浮窗已{'显示' if checked else '隐藏'}", 3000
+        )
+
+    def _on_floating_layout_changed(self, _index: int) -> None:
+        data = self.floating_layout_combo.currentData()
+        if not data:
+            return
+        rows, columns = data
+        self.config["floating_rows"] = int(rows)
+        self.config["floating_columns"] = int(columns)
+        self._persist()
+
+    def _on_floating_rotation_changed(self, value: int) -> None:
+        self.config["floating_rotate_seconds"] = float(value)
+        self._persist()
+
+    def _on_floating_font_changed(self, value: int) -> None:
+        self.config["floating_font_size"] = int(value)
+        self._persist()
+
+    def _on_floating_opacity_changed(self, value: float) -> None:
+        self.config["floating_opacity"] = float(value)
+        self._persist()
 
     def _on_autostart_toggled(self, checked: bool) -> None:
         try:
@@ -841,7 +962,9 @@ class MainWindow(QMainWindow):
         self._append_log(f"{name} 解密: {plain_hex}")
         if measurement:
             visible_count = sum(
-                1 for key in utils.METRIC_ORDER if key in measurement
+                1
+                for key in utils.METRIC_ORDER
+                if key in measurement and self.config["metrics"].get(key, False)
             )
             self.log_hint.setText(
                 f"最近数据 {now} · 已解析 {visible_count} 个指标"

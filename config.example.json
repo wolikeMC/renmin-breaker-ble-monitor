@@ -4,10 +4,20 @@
   "metrics": {
     "power": true,
     "voltage": true,
-    "current": true,
-    "energy": true
+    "current": false,
+    "energy": false,
+    "power_factor": false,
+    "cost": false
   },
   "poll_interval": 3.0,
   "scan_timeout": 8.0,
-  "auto_start": false
+  "auto_start": false,
+  "floating_enabled": true,
+  "floating_rows": 2,
+  "floating_columns": 2,
+  "floating_rotate_seconds": 5.0,
+  "floating_font_size": 11,
+  "floating_opacity": 0.86,
+  "floating_x": null,
+  "floating_y": null
 }

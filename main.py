@@ -39,6 +39,7 @@ import pystray
 import utils
 from ble_manager import BleManager
 from gui import MainWindow
+from taskbar_widget import FloatingMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -627,6 +628,7 @@ class YUNMApplication:
         self.window = MainWindow(self.config)
         self.bridge = BleBridge()
         self.tray = TrayController(self.window, self.config)
+        self.floating = FloatingMonitor(self.config)
 
         self._connect_signals()
         self.single.show_requested.connect(self.window.show_window)
@@ -639,11 +641,19 @@ class YUNMApplication:
         # 蓝牙 -> GUI / 托盘（跨线程自动排队）
         self.bridge.data_received.connect(self.window.on_device_data)
         self.bridge.data_received.connect(self.tray.on_data)
+        self.bridge.data_received.connect(self.floating.on_data)
         self.bridge.status_changed.connect(self.window.on_device_status)
         self.bridge.status_changed.connect(self.tray.on_status)
+        self.bridge.status_changed.connect(self.floating.on_status)
         self.bridge.log_message.connect(self.window.append_system_log)
         self.bridge.scan_finished.connect(self.window.on_scan_finished)
         self.bridge.scan_failed.connect(self.window.on_scan_failed)
+
+        # 悬浮窗 -> 主窗口 / 托盘
+        self.floating.show_main_requested.connect(self.window.show_window)
+        self.floating.hide_requested.connect(self._hide_floating)
+        self.floating.quit_requested.connect(self.qt_app.quit)
+        self.floating.position_changed.connect(self._on_floating_moved)
 
         # GUI -> 蓝牙 / 托盘
         self.window.config_changed.connect(self._on_config_changed)
@@ -658,6 +668,26 @@ class YUNMApplication:
         self.config = config
         self.bridge.apply_config(config)
         self.tray.on_config_changed(config)
+        self.floating.apply_config(config)
+
+    def _hide_floating(self) -> None:
+        """右键“隐藏悬浮窗”：同时取消配置，避免重启后又出现。"""
+        self.floating.hide()
+        self.config["floating_enabled"] = False
+        try:
+            utils.save_config(self.config)
+        except Exception:
+            logger.exception("保存悬浮窗开关失败")
+        if hasattr(self.window, "set_floating_enabled"):
+            self.window.set_floating_enabled(False)
+
+    def _on_floating_moved(self, x: int, y: int) -> None:
+        self.config["floating_x"] = int(x)
+        self.config["floating_y"] = int(y)
+        try:
+            utils.save_config(self.config)
+        except Exception:
+            logger.exception("保存悬浮窗位置失败")
 
     def _start_scan(self) -> None:
         timeout = float(self.config.get("scan_timeout", 8.0))
@@ -710,6 +740,11 @@ class YUNMApplication:
             self.single.stop()
         except Exception:
             logger.exception("停止单实例服务失败")
+
+        try:
+            self.floating.close()
+        except Exception:
+            logger.exception("关闭悬浮窗失败")
 
         try:
             self.window.prepare_exit()

@@ -45,22 +45,36 @@ METRIC_DEFS: dict[str, dict[str, str]] = {
     "power": {"label": "功率", "unit": "W", "fmt": "{:.1f}"},
     "voltage": {"label": "电压", "unit": "V", "fmt": "{:.1f}"},
     "current": {"label": "电流", "unit": "A", "fmt": "{:.3f}"},
-    "energy": {"label": "电量", "unit": "kWh", "fmt": "{:.3f}"},
+    "energy": {"label": "电量", "unit": "kWh", "fmt": "{:.2f}"},
+    "power_factor": {"label": "功率因数", "unit": "", "fmt": "{:.2f}"},
+    "cost": {"label": "金额", "unit": "元", "fmt": "{:.2f}"},
 }
 METRIC_ORDER: tuple[str, ...] = tuple(METRIC_DEFS.keys())
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "devices": [],                 # [{"name": "插座1", "address": "AA:BB:..."}]
     "paused_devices": [],          # 用户手动“断开”的地址；重启后仍保持断开
-    "metrics": {                   # 托盘/界面需要显示的指标
+    "metrics": {                   # 托盘/界面/悬浮窗需要显示的指标
         "power": True,
         "voltage": True,
         "current": False,
         "energy": False,
+        "power_factor": False,
+        "cost": False,
     },
     "poll_interval": 3.0,          # 轮询间隔（秒）
     "scan_timeout": 8.0,           # 扫描附近设备的持续时间（秒）
     "auto_start": False,           # 仅作记录，真实状态以注册表为准
+
+    # 贴任务栏悬浮窗（类似 TrafficMonitor）
+    "floating_enabled": True,
+    "floating_rows": 2,
+    "floating_columns": 2,
+    "floating_rotate_seconds": 5.0,
+    "floating_font_size": 11,
+    "floating_opacity": 0.86,
+    "floating_x": None,
+    "floating_y": None,
 }
 
 _MAC_RE = re.compile(r"^[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}$")
@@ -230,6 +244,37 @@ def normalize_config(raw: Any) -> dict[str, Any]:
         raw.get("scan_timeout"), 3.0, 30.0, config["scan_timeout"]
     )
     config["auto_start"] = bool(raw.get("auto_start", config["auto_start"]))
+
+    # 悬浮窗设置
+    config["floating_enabled"] = bool(
+        raw.get("floating_enabled", config["floating_enabled"])
+    )
+    config["floating_rows"] = int(
+        _clamp_float(raw.get("floating_rows"), 1, 4, config["floating_rows"])
+    )
+    config["floating_columns"] = int(
+        _clamp_float(raw.get("floating_columns"), 1, 2, config["floating_columns"])
+    )
+    config["floating_rotate_seconds"] = _clamp_float(
+        raw.get("floating_rotate_seconds"),
+        0.0,
+        60.0,
+        config["floating_rotate_seconds"],
+    )
+    config["floating_font_size"] = int(
+        _clamp_float(
+            raw.get("floating_font_size"), 8, 24, config["floating_font_size"]
+        )
+    )
+    config["floating_opacity"] = _clamp_float(
+        raw.get("floating_opacity"), 0.3, 1.0, config["floating_opacity"]
+    )
+    for axis in ("floating_x", "floating_y"):
+        value = raw.get(axis)
+        if isinstance(value, (int, float)) and -20000 <= value <= 20000:
+            config[axis] = int(value)
+        else:
+            config[axis] = None
     return config
 
 
