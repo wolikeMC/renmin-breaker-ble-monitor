@@ -274,6 +274,12 @@ class MainWindow(QMainWindow):
 
         self.floating_cb = QCheckBox("显示悬浮窗")
         floating_layout.addWidget(self.floating_cb)
+        self.floating_taskbar_cb = QCheckBox("贴任务栏")
+        self.floating_taskbar_cb.setToolTip(
+            "把悬浮窗覆盖到任务栏内部，并给右侧时钟/托盘留出空间；\n"
+            "这是稳定的置顶窗口，不注入 Explorer。"
+        )
+        floating_layout.addWidget(self.floating_taskbar_cb)
         floating_layout.addSpacing(14)
 
         floating_layout.addWidget(QLabel("排列："))
@@ -309,7 +315,8 @@ class MainWindow(QMainWindow):
         floating_layout.addWidget(self.floating_opacity_spin)
 
         floating_layout.addStretch(1)
-        floating_hint = QLabel("拖动移动 · 左键打开 · 右键菜单")
+        floating_hint = QLabel("拖动移动 · 左键打开")
+        floating_hint.setToolTip("右键悬浮窗可隐藏或退出程序")
         floating_hint.setStyleSheet("color: #757575;")
         floating_layout.addWidget(floating_hint)
         root.addWidget(floating_group)
@@ -383,6 +390,10 @@ class MainWindow(QMainWindow):
 
         with QSignalBlocker(self.floating_cb):
             self.floating_cb.setChecked(bool(self.config.get("floating_enabled", True)))
+        with QSignalBlocker(self.floating_taskbar_cb):
+            self.floating_taskbar_cb.setChecked(
+                bool(self.config.get("floating_in_taskbar", True))
+            )
         with QSignalBlocker(self.floating_layout_combo):
             target = (
                 int(self.config.get("floating_rows", 2)),
@@ -398,7 +409,7 @@ class MainWindow(QMainWindow):
             )
         with QSignalBlocker(self.floating_font_spin):
             self.floating_font_spin.setValue(
-                int(self.config.get("floating_font_size", 11))
+                int(self.config.get("floating_font_size", 9))
             )
         with QSignalBlocker(self.floating_opacity_spin):
             self.floating_opacity_spin.setValue(
@@ -419,6 +430,9 @@ class MainWindow(QMainWindow):
         self.autostart_cb.toggled.connect(self._on_autostart_toggled)
         self.interval_spin.valueChanged.connect(self._on_interval_changed)
         self.floating_cb.toggled.connect(self._on_floating_toggled)
+        self.floating_taskbar_cb.toggled.connect(
+            self._on_floating_taskbar_toggled
+        )
         self.floating_layout_combo.currentIndexChanged.connect(
             self._on_floating_layout_changed
         )
@@ -877,6 +891,10 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"悬浮窗已{'显示' if checked else '隐藏'}", 3000
         )
+
+    def _on_floating_taskbar_toggled(self, checked: bool) -> None:
+        self.config["floating_in_taskbar"] = bool(checked)
+        self._persist()
 
     def _on_floating_layout_changed(self, _index: int) -> None:
         data = self.floating_layout_combo.currentData()

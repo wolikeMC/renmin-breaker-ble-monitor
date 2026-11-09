@@ -12,7 +12,7 @@
 
 ![悬浮窗预览](docs/floating.png)
 
-悬浮窗默认贴在右下角任务栏上方，显示：
+悬浮窗默认覆盖在右下角**任务栏内部**，并避开时钟/系统托盘；也可以取消“贴任务栏”让它回到任务栏上方。显示：
 
 ```text
 功率 159.4W    电压 240.2V
@@ -20,6 +20,10 @@
 ```
 
 拖动可移动，左键打开主界面，右键可以隐藏或退出；设置里可以改排列、轮播秒数、字号和透明度。
+
+> Windows 11 已不支持传统 deskband，真正的 Explorer 子窗口没有稳定 API。
+> 这里的“贴任务栏”是置顶无边框覆盖层，外观和 TrafficMonitor 类似，
+> 不注入 Explorer，因此不会因系统更新破坏任务栏。
 
 > **免责声明**
 >
@@ -161,10 +165,11 @@ EC ED | 长度(2) | 数据(32) | CRC(2)
   "scan_timeout": 8.0,
   "auto_start": false,
   "floating_enabled": true,
+  "floating_in_taskbar": true,
   "floating_rows": 2,
   "floating_columns": 2,
   "floating_rotate_seconds": 5.0,
-  "floating_font_size": 11,
+  "floating_font_size": 9,
   "floating_opacity": 0.86,
   "floating_x": null,
   "floating_y": null

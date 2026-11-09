@@ -43,16 +43,17 @@ class FloatingMonitor(QWidget):
         self._rows = 2
         self._columns = 2
         self._rotate_seconds = 5.0
-        self._font_size = 11
+        self._font_size = 9
         self._opacity = 0.86
+        self._in_taskbar = True
 
         self._pages: list[list[str]] = []
         self._page = 0
         self._cell_widths: list[int] = []
         self._line_height = 18
-        self._pad = 9
-        self._gap = 12
-        self._dot_width = 10
+        self._pad = 5
+        self._gap = 8
+        self._dot_width = 9
 
         self._drag_offset: QPoint | None = None
         self._drag_start: QPoint | None = None
@@ -84,8 +85,14 @@ class FloatingMonitor(QWidget):
         self._rows = max(1, min(4, int(config.get("floating_rows", 2))))
         self._columns = max(1, min(2, int(config.get("floating_columns", 2))))
         self._rotate_seconds = float(config.get("floating_rotate_seconds", 5.0))
-        self._font_size = max(8, min(24, int(config.get("floating_font_size", 11))))
+        self._font_size = max(8, min(24, int(config.get("floating_font_size", 9))))
         self._opacity = max(0.3, min(1.0, float(config.get("floating_opacity", 0.86))))
+        old_in_taskbar = self._in_taskbar
+        self._in_taskbar = bool(config.get("floating_in_taskbar", True))
+        # 贴任务栏时用更紧凑的内边距，避免小窗比任务栏还高。
+        self._pad = 5 if self._in_taskbar else 9
+        self._gap = 8 if self._in_taskbar else 12
+        self._dot_width = 9 if self._in_taskbar else 10
         self._font = QFont("Microsoft YaHei UI", self._font_size)
         self._metrics_font = QFont(self._font)
 
@@ -100,6 +107,11 @@ class FloatingMonitor(QWidget):
 
         self._rebuild_pages()
         self._restore_position(initial=initial)
+        if old_in_taskbar != self._in_taskbar:
+            if self._in_taskbar:
+                self._place_in_taskbar()
+            else:
+                self._place_above_taskbar()
 
         if config.get("floating_enabled", True):
             if not self.isVisible():
@@ -239,14 +251,44 @@ class FloatingMonitor(QWidget):
             self._clamp_position()
             return
         if initial or not self.isVisible():
-            screen = QApplication.primaryScreen()
-            if screen is None:
-                return
-            area = screen.availableGeometry()
-            self.move(
-                area.right() - self.width() - 12,
-                area.bottom() - self.height() - 12,
-            )
+            if self._in_taskbar:
+                self._place_in_taskbar()
+            else:
+                self._place_above_taskbar()
+
+    def _place_above_taskbar(self) -> None:
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            return
+        area = screen.availableGeometry()
+        self.move(
+            area.right() - self.width() - 12,
+            area.bottom() - self.height() - 12,
+        )
+
+    def _place_in_taskbar(self) -> None:
+        """把窗口覆盖到任务栏内部，并给右侧时钟/托盘留出空间。
+
+        这不是注入 Explorer 的子窗口，而是置顶无边框窗口；
+        视觉上位于任务栏内，稳定性远高于 deskband。
+        """
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            return
+        full = screen.geometry()
+        area = screen.availableGeometry()
+        taskbar_height = max(0, full.bottom() - area.bottom())
+        if taskbar_height < 16:
+            # 任务栏不在底部/自动隐藏时退回“任务栏上方”。
+            self._place_above_taskbar()
+            return
+        taskbar_top = full.bottom() - taskbar_height + 1
+        y = taskbar_top + max(0, (taskbar_height - self.height()) // 2)
+        # 右侧约 220 逻辑像素留给时钟和系统托盘。
+        x = full.right() - self.width() - 220
+        x = max(full.left() + 8, x)
+        self.move(x, y)
+        self._clamp_position()
 
     def _clamp_position(self) -> None:
         screen = QApplication.screenAt(self.frameGeometry().center())
