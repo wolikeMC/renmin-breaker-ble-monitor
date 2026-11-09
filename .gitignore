@@ -10,7 +10,7 @@ venv/
 # 本机配置与隐私数据
 config.json
 captures/
-*.log
+*.log*
 adb_ble_capture.log
 
 # 发布产物 / 含本机 MAC 的诊断脚本（按需本地保留）
