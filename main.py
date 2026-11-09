@@ -521,10 +521,26 @@ class SingleInstance(QObject):
             socket.waitForBytesWritten(timeout_ms)
             socket.disconnectFromServer()
         else:
-            # Mutex 已存在但本地 socket 不可用（例如被安全策略拦截）：
-            # 仍然必须退出，不能启动第二个窗口。
-            logger.info("已有实例运行，但无法连接其显示通道")
+            # 某些安全策略会拦截本地命名管道；再用 Win32 查找已有窗口。
+            logger.info("已有实例运行，尝试直接唤醒其窗口")
+            self._focus_existing_window()
         return True
+
+    @staticmethod
+    def _focus_existing_window() -> None:
+        """不依赖本地 socket，直接按窗口标题唤醒已有实例。"""
+        if os.name != "nt":
+            return
+        try:
+            import ctypes
+
+            user32 = ctypes.windll.user32
+            hwnd = user32.FindWindowW(None, utils.APP_DISPLAY_NAME)
+            if hwnd:
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                user32.SetForegroundWindow(hwnd)
+        except Exception:
+            logger.debug("Win32 唤醒已有窗口失败", exc_info=True)
 
     def start(self) -> bool:
         """作为第一个实例启动本地 server（用于唤醒窗口）。"""
