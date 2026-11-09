@@ -27,6 +27,7 @@
 - **状态颜色**：黄=连接中，绿=正常，红=断线
 - **设备级断开/恢复**：一键释放 BLE，让手机小程序连接；断开状态持久化
 - **开机自启**：写入 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
+- **单实例保护**：重复双击只会唤醒已有窗口，不会再开第二个托盘/蓝牙连接
 - **单文件 exe**：PyInstaller onefile，目标电脑**不需要安装 Python**
 - **完整中文界面 + 日志**
 

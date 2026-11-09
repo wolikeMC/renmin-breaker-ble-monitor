@@ -21,6 +21,8 @@
 from __future__ import annotations
 
 import argparse
+import getpass
+import hashlib
 import logging
 import os
 import sys
@@ -30,6 +32,7 @@ from typing import Any
 from PIL import Image, ImageDraw
 from PySide6.QtCore import QObject, Signal, Slot
 from PySide6.QtGui import QIcon
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMessageBox
 import pystray
 
@@ -467,6 +470,104 @@ class TrayController(QObject):
 
 
 # ---------------------------------------------------------------------------
+# 单实例保护
+# ---------------------------------------------------------------------------
+
+class SingleInstance(QObject):
+    """Windows 单实例保护。
+
+    主守卫使用命名 Mutex（不依赖 Qt 网络权限），第二个实例检测到 Mutex
+    已存在后立即退出；如果第一个实例的 QLocalServer 可用，还会发送
+    "show" 让已有窗口从托盘恢复。
+    """
+
+    show_requested = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        user_hash = hashlib.sha1(
+            getpass.getuser().encode("utf-8", "replace")
+        ).hexdigest()[:12]
+        self._name = f"YUNM-Plug-Monitor-{user_hash}"
+        self._server = QLocalServer(self)
+        self._server.newConnection.connect(self._accept_connections)
+        self._started = False
+
+        # Windows 命名 Mutex：进程退出（包括崩溃）时由系统自动释放。
+        self._mutex_handle: int | None = None
+        self._already_running = False
+        if os.name == "nt":
+            try:
+                import ctypes
+
+                self._mutex_handle = ctypes.windll.kernel32.CreateMutexW(
+                    None, False, f"Local\\{self._name}"
+                )
+                self._already_running = (
+                    ctypes.windll.kernel32.GetLastError() == 183  # ERROR_ALREADY_EXISTS
+                )
+            except Exception:
+                logger.exception("创建单实例 Mutex 失败")
+
+    def notify_existing(self, timeout_ms: int = 800) -> bool:
+        """如果已有实例，请求它显示窗口并返回 True。"""
+        if not self._already_running:
+            return False
+
+        socket = QLocalSocket()
+        socket.connectToServer(self._name)
+        if socket.waitForConnected(timeout_ms):
+            socket.write(b"show")
+            socket.waitForBytesWritten(timeout_ms)
+            socket.disconnectFromServer()
+        else:
+            # Mutex 已存在但本地 socket 不可用（例如被安全策略拦截）：
+            # 仍然必须退出，不能启动第二个窗口。
+            logger.info("已有实例运行，但无法连接其显示通道")
+        return True
+
+    def start(self) -> bool:
+        """作为第一个实例启动本地 server（用于唤醒窗口）。"""
+        if self._already_running:
+            return False
+        # 清理上次异常退出留下的命名管道
+        QLocalServer.removeServer(self._name)
+        self._started = self._server.listen(self._name)
+        if not self._started:
+            logger.warning("单实例 server 启动失败：%s", self._server.errorString())
+        return self._started
+
+    def stop(self) -> None:
+        if self._started:
+            self._server.close()
+            self._started = False
+        if self._mutex_handle:
+            try:
+                import ctypes
+
+                ctypes.windll.kernel32.CloseHandle(self._mutex_handle)
+            except Exception:
+                pass
+            self._mutex_handle = None
+
+    def _accept_connections(self) -> None:
+        while self._server.hasPendingConnections():
+            connection = self._server.nextPendingConnection()
+            if connection is None:
+                continue
+            connection.readyRead.connect(
+                lambda conn=connection: self._read_request(conn)
+            )
+            connection.disconnected.connect(connection.deleteLater)
+
+    def _read_request(self, connection: QLocalSocket) -> None:
+        data = bytes(connection.readAll())
+        if data:
+            logger.info("收到第二个实例的显示请求")
+            self.show_requested.emit()
+
+
+# ---------------------------------------------------------------------------
 # 应用装配
 # ---------------------------------------------------------------------------
 
@@ -476,6 +577,14 @@ class YUNMApplication:
         self.qt_app = QApplication(qt_argv)
         self.qt_app.setApplicationName(utils.APP_DISPLAY_NAME)
         self.qt_app.setQuitOnLastWindowClosed(False)
+
+        # 必须在创建窗口、托盘和蓝牙线程之前判断。
+        # 第二个实例只负责唤醒第一个实例，然后立即退出。
+        self.single = SingleInstance()
+        self._already_running = self.single.notify_existing()
+        if self._already_running:
+            logger.info("检测到已有实例，已请求其显示窗口，本实例退出")
+            return
 
         icon_file = utils.resource_path("app.ico")
         if os.path.isfile(icon_file):
@@ -504,6 +613,9 @@ class YUNMApplication:
         self.tray = TrayController(self.window, self.config)
 
         self._connect_signals()
+        self.single.show_requested.connect(self.window.show_window)
+        self.single.start()
+
         self._shutdown_done = False
         self.qt_app.aboutToQuit.connect(self._shutdown)
 
@@ -536,6 +648,9 @@ class YUNMApplication:
         self.bridge.start_scan(timeout)
 
     def run(self) -> int:
+        if self._already_running:
+            return 0
+
         self.window.show()
 
         if self.no_tray:
@@ -574,6 +689,11 @@ class YUNMApplication:
             return
         self._shutdown_done = True
         logger.info("正在退出程序…")
+
+        try:
+            self.single.stop()
+        except Exception:
+            logger.exception("停止单实例服务失败")
 
         try:
             self.window.prepare_exit()
